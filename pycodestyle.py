@@ -55,6 +55,8 @@ import re
 import sys
 import time
 import tokenize
+import itertools
+import operator
 
 from fnmatch import fnmatch
 from optparse import OptionParser
@@ -65,7 +67,7 @@ try:
 except ImportError:
     from ConfigParser import RawConfigParser
 
-__version__ = '2.1.0.dev0'
+__version__ = '2.1.0.dev0.dsedivec.1'
 
 DEFAULT_EXCLUDE = '.svn,CVS,.bzr,.hg,.git,__pycache__,.tox'
 DEFAULT_IGNORE = 'E121,E123,E126,E226,E24,E704,W503'
@@ -97,6 +99,7 @@ WS_OPTIONAL_OPERATORS = ARITHMETIC_OP.union(['^', '&', '|', '<<', '>>', '%'])
 WS_NEEDED_OPERATORS = frozenset([
     '**=', '*=', '/=', '//=', '+=', '-=', '!=', '<>', '<', '>',
     '%=', '^=', '&=', '|=', '==', '<=', '>=', '<<=', '>>=', '='])
+CLOSING_OPERATORS = {"(": ")", "{": "}", "[": "]"}
 WHITESPACE = frozenset(' \t')
 NEWLINE = frozenset([tokenize.NL, tokenize.NEWLINE])
 SKIP_TOKENS = NEWLINE.union([tokenize.INDENT, tokenize.DEDENT])
@@ -129,25 +132,6 @@ COMMENT_WITH_NL = tokenize.generate_tokens(['#\n'].pop).send(None)[1] == '#\n'
 ##############################################################################
 # Plugins (check functions) for physical lines
 ##############################################################################
-
-
-def tabs_or_spaces(physical_line, indent_char):
-    r"""Never mix tabs and spaces.
-
-    The most popular way of indenting Python is with spaces only.  The
-    second-most popular way is with tabs only.  Code indented with a mixture
-    of tabs and spaces should be converted to using spaces exclusively.  When
-    invoking the Python command line interpreter with the -t option, it issues
-    warnings about code that illegally mixes tabs and spaces.  When using -tt
-    these warnings become errors.  These options are highly recommended!
-
-    Okay: if a == 0:\n        a = 1\n        b = 1
-    E101: if a == 0:\n        a = 1\n\tb = 1
-    """
-    indent = INDENT_REGEX.match(physical_line).group(1)
-    for offset, char in enumerate(indent):
-        if char != indent_char:
-            return offset, "E101 indentation contains mixed spaces and tabs"
 
 
 def tabs_obsolete(physical_line):
@@ -234,6 +218,111 @@ def maximum_line_length(physical_line, max_line_length, multiline, noqa):
 ##############################################################################
 # Plugins (check functions) for logical lines
 ##############################################################################
+
+
+def mixed_tabs_and_spaces(logical_line, tokens, indent_char, indent_level):
+    r"""Never mix tabs and spaces.
+
+    The most popular way of indenting Python is with spaces only.  The
+    second-most popular way is with tabs only.  Code indented with a mixture
+    of tabs and spaces should be converted to using spaces exclusively.  When
+    invoking the Python command line interpreter with the -t option, it issues
+    warnings about code that illegally mixes tabs and spaces.  When using -tt
+    these warnings become errors.  These options are highly recommended!
+
+    Okay: if a == 0:\n        a = 1\n        b = 1
+    E101: if a == 0:\n        a = 1\n\tb = 1
+    """
+    if not indent_char:
+        return
+    elif indent_char == '\t':
+        expected_indent = '\t' * (indent_level // 8)
+    elif indent_char == ' ':
+        expected_indent = ' ' * indent_level
+    # op_stack keeps track of grouping or continuation between lines.
+    # Every time a new grouping is opened by a "(", "{", or "[", an
+    # element is appened to this list.  An element is also pushed onto
+    # this stack when a line ends with a backslash (outside of a
+    # string literal).  Each element in op_stack is itself a two
+    # element list of:
+    #
+    #     [token, only_indent_with_indent_char]
+    #
+    # token is the token that ends the grouping, or a backslash if the
+    # previous line ended with a backslash.
+    # only_indent_with_indent_char is a boolean specifying whether
+    # lines may introduce additional indent only with indent_char
+    # (True), or with either spaces or tabs (False).  Element 0 of
+    # op_stack has None for the token so that the stack is never
+    # empty.
+    #
+    # A stack is necessary because of constructs such as:
+    #
+    #     if True:
+    #         long_function_name(
+    #             "this line should only be indented with indent_char"
+    #             some_func(bar, baz,
+    #                       "this line could be aligned with spaces"),
+    #             "this line should only be indented with indent_char",
+    #         )
+    op_stack = [[None, True]]
+    for line, line_tokens in itertools.groupby(tokens, operator.itemgetter(4)):
+        line_tokens = list(line_tokens)
+        line_num = line_tokens[0][2][0]
+        line_indent_match = INDENT_REGEX.match(line)
+        line_indent = line_indent_match.group(1) if line_indent_match else ''
+        for col, (expected_ch, line_ch) in enumerate(zip(expected_indent,
+                                                         line_indent), 1):
+            if expected_ch != line_ch:
+                yield (line_num, col), \
+                    'E101 indentation contains mixed spaces and tabs'
+                break
+        if op_stack[-1][1]:
+            hanging_indent = line_indent[len(expected_indent):]
+            for col, line_ch in enumerate(hanging_indent,
+                                          len(expected_indent)):
+                if line_ch != indent_char:
+                    yield (line_num, col), \
+                        'E101 indentation contains mixed spaces and tabs'
+                    break
+        # If the previous line ended with a backslash, that only
+        # applied to this line, and now we're done checking the indent
+        # of this line.  Remove that from the stack.
+        if op_stack[-1][0] == "\\":
+            del op_stack[-1]
+        this_line_depth = 0
+        for token in line_tokens:
+            if token[0] == tokenize.OP and token[1] in "({[":
+                # Opening a new pair.
+                op_stack.append([CLOSING_OPERATORS[token[1]], True])
+                this_line_depth += 1
+            elif token[0] == tokenize.OP and token[1] == op_stack[-1][0]:
+                del op_stack[-1]
+                # We could be closing a pair that was started on
+                # another line, but don't let this_line_depth fall
+                # below zero.
+                if this_line_depth > 0:
+                    this_line_depth -= 1
+                # If we didn't just close the last open pair on this
+                # line(this_line_depth still greater than 0), then
+                # that means we opened a pair and started putting some
+                # content (another grouping) inside it.  When you open
+                # a pair and put content in it on the same line, you
+                # have to allow e.g. spaces for alignment on the
+                # following lines.
+                if this_line_depth > 0:
+                    op_stack[-1][1] = False
+            elif (token[0] not in (tokenize.NL, tokenize.COMMENT) and
+                  this_line_depth > 0):
+                # If this_line_depth > 0 then op_stack[-1] was pushed
+                # onto the stack on this line.  If we're seeing
+                # something other than the end of the line after a
+                # pair has been opened on this line then we must
+                # permit any kind of indentation on the following
+                # line, until the close of this pair.
+                op_stack[-1][1] = False
+        if len(op_stack) == 1 and line.rstrip("\r\n").endswith("\\"):
+            op_stack.append(["\\", False])
 
 
 def blank_lines(logical_line, blank_lines, indent_level, line_number,
@@ -1567,8 +1656,6 @@ class Checker(object):
             if result is not None:
                 (offset, text) = result
                 self.report_error(self.line_number, offset, text, check)
-                if text[:4] == 'E101':
-                    self.indent_char = line[0]
 
     def build_tokens_line(self):
         """Build a logical line from tokens."""
@@ -1622,6 +1709,7 @@ class Checker(object):
             if self.verbose >= 4:
                 print('   ' + name)
             self.init_checker_state(name, argument_names)
+            last_e101_token = 0
             for offset, text in self.run_check(check, argument_names) or ():
                 if not isinstance(offset, tuple):
                     for token_offset, pos in mapping:
@@ -1629,6 +1717,15 @@ class Checker(object):
                             break
                     offset = (pos[0], pos[1] + offset - token_offset)
                 self.report_error(offset[0], offset[1], text, check)
+                if text[:4] == 'E101':
+                    assert self.indent_char is not None
+                    for last_e101_token, token in enumerate(
+                            self.tokens[last_e101_token:], last_e101_token):
+                        if token[2][0] == offset[0]:
+                            new_indent_char = token[4][0]
+                            if new_indent_char in " \t":
+                                self.indent_char = new_indent_char
+                            break
         if self.logical_line:
             self.previous_indent_level = self.indent_level
             self.previous_logical = self.logical_line

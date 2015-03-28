@@ -52,6 +52,11 @@ def long_function_name(
         var_one, var_two, var_three,
         var_four):
 	print(var_one)
+#: W191
+if True:
+	print "indent set to tabs"
+foo = long_function_name(var_one, var_two,
+                         var_three, var_four)
 #: E101 W191
 if ((row < 0 or self.moduleCount <= row or
      col < 0 or self.moduleCount <= col)):
@@ -86,21 +91,21 @@ if (a == 2 or
     b == """abc def ghi
 jkl mno"""):
 	return True
-#: W191:2:1 W191:3:1 E101:3:2
+#: W191:2:1 W191:3:1
 if length > options.max_line_length:
 	return options.max_line_length, \
 	    "E501 line too long (%d characters)" % length
 
 
 #
-#: E101 W191 W191
+#: W191 W191
 if os.path.exists(os.path.join(path, PEP8_BIN)):
 	cmd = ([os.path.join(path, PEP8_BIN)] +
 	       self._pep8_options(targetfile))
 #: W191
 '''
 	multiline string with tab in it'''
-#: E101 W191
+#: W191
 '''multiline string
 	with tabs
    and spaces
@@ -118,6 +123,11 @@ or long long long long long long long long long long long long long long long lo
 	will get no warning
 even though the noqa comment is not immediately after the string
 ''' + foo  # noqa
+#: W191
+if True:
+    print("""
+	tab at start of this line
+""")
 #
 #: E101 W191
 if foo is None and bar is "frop" and \
@@ -131,6 +141,10 @@ if True:
 	foo(
 		1,
 		2)
+#: W191 W191
+if True:
+	foo(1,
+	    2)
 #: W191 W191 W191 W191 W191
 def test_keys(self):
 	"""areas.json - All regions are accounted for."""

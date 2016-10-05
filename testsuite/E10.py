@@ -54,3 +54,9 @@ if True:
 	foo((
 	    "this doesn't call for spaces for alignment, should get E101 here"
 	))
+#: W191:3:1 W191:4:1 W191:5:1
+# This should not yield E101.
+if True:
+	floof(bar,
+	      eekerson(
+	          blah blah blah))

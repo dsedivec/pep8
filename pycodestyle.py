@@ -67,7 +67,7 @@ try:
 except ImportError:
     from ConfigParser import RawConfigParser
 
-__version__ = '2.1.0.dev0.dsedivec.1'
+__version__ = '2.1.0.dev0.dsedivec.2'
 
 DEFAULT_EXCLUDE = '.svn,CVS,.bzr,.hg,.git,__pycache__,.tox'
 DEFAULT_IGNORE = 'E121,E123,E126,E226,E24,E704,W503'
@@ -296,8 +296,11 @@ def mixed_tabs_and_spaces(logical_line, tokens, indent_char, indent_level):
         this_line_depth = 0
         for token in line_tokens:
             if token[0] == tokenize.OP and token[1] in "({[":
-                # Opening a new pair.
-                op_stack.append([CLOSING_OPERATORS[token[1]], True])
+                # Opening a new pair.  If we were already allowing
+                # indentation other than indent_char, as specified by
+                # op_stack[-1][1], then we must continue allowing that
+                # in this new group.
+                op_stack.append([CLOSING_OPERATORS[token[1]], op_stack[-1][1]])
                 this_line_depth += 1
             elif token[0] == tokenize.OP and token[1] == op_stack[-1][0]:
                 del op_stack[-1]

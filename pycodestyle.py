@@ -268,6 +268,9 @@ def mixed_tabs_and_spaces(logical_line, tokens, indent_char, indent_level):
     op_stack = [[None, True]]
     for line, line_tokens in itertools.groupby(tokens, operator.itemgetter(4)):
         line_tokens = list(line_tokens)
+        # Note this is pulling the _end_ line number, not the start
+        # line number.  Significant, for example, with multi-line
+        # strings.
         line_num = line_tokens[0][2][0]
         line_indent_match = INDENT_REGEX.match(line)
         line_indent = line_indent_match.group(1) if line_indent_match else ''
@@ -304,7 +307,7 @@ def mixed_tabs_and_spaces(logical_line, tokens, indent_char, indent_level):
                 if this_line_depth > 0:
                     this_line_depth -= 1
                 # If we didn't just close the last open pair on this
-                # line(this_line_depth still greater than 0), then
+                # line (this_line_depth still greater than 0), then
                 # that means we opened a pair and started putting some
                 # content (another grouping) inside it.  When you open
                 # a pair and put content in it on the same line, you
